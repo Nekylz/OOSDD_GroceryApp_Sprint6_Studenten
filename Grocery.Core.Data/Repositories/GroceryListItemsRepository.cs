@@ -1,56 +1,134 @@
 ﻿using Grocery.Core.Interfaces.Repositories;
 using Grocery.Core.Models;
+using Grocery.Core.Data;
+using Microsoft.Data.Sqlite;
 
 namespace Grocery.Core.Data.Repositories
 {
-    public class GroceryListItemsRepository : IGroceryListItemsRepository
+    public class GroceryListItemsRepository : DatabaseConnection, IGroceryListItemsRepository
     {
-        private readonly List<GroceryListItem> groceryListItems;
-
-        public GroceryListItemsRepository()
-        {
-            groceryListItems = [
-                new GroceryListItem(1, 1, 1, 3),
-                new GroceryListItem(2, 1, 2, 1),
-                new GroceryListItem(3, 1, 3, 4),
-                new GroceryListItem(4, 2, 1, 2),
-                new GroceryListItem(5, 2, 2, 5),
-            ];
-        }
-
         public List<GroceryListItem> GetAll()
         {
-            return groceryListItems;
+            OpenConnection();
+            List<GroceryListItem> items = new List<GroceryListItem>();
+
+            using (var command = Connection.CreateCommand())
+            {
+                command.CommandText = "SELECT Id, GroceryListId, ProductId, Amount FROM GroceryListItems";
+
+                using (var reader = command.ExecuteReader())
+                {
+                    // Lees alle items uit de database
+                    while (reader.Read())
+                    {
+                        items.Add(new GroceryListItem(
+                            reader.GetInt32(0), // Id
+                            reader.GetInt32(1), // GroceryListId
+                            reader.GetInt32(2), // ProductId
+                            reader.GetInt32(3)  // Amount
+                        ));
+                    }
+                }
+            }
+
+            return items;
         }
 
         public List<GroceryListItem> GetAllOnGroceryListId(int id)
         {
-            return groceryListItems.Where(g => g.GroceryListId == id).ToList();
+            // Haal alle items op en filter met LINQ op GroceryListId
+            var allItems = GetAll();
+            return (from item in allItems
+                    where item.GroceryListId == id
+                    select item).ToList();
         }
 
         public GroceryListItem Add(GroceryListItem item)
         {
-            int newId = groceryListItems.Max(g => g.Id) + 1;
-            item.Id = newId;
-            groceryListItems.Add(item);
+            OpenConnection();
+
+            using (var command = Connection.CreateCommand())
+            {
+                // Voeg nieuw item toe en haal de gegenereerde Id op
+                command.CommandText = @"
+                    INSERT INTO GroceryListItems (GroceryListId, ProductId, Amount) 
+                    VALUES (@groceryListId, @productId, @amount);
+                    SELECT last_insert_rowid();";
+
+                command.Parameters.AddWithValue("@groceryListId", item.GroceryListId);
+                command.Parameters.AddWithValue("@productId", item.ProductId);
+                command.Parameters.AddWithValue("@amount", item.Amount);
+
+                int newId = Convert.ToInt32(command.ExecuteScalar());
+                item.Id = newId;
+            }
+
             return Get(item.Id);
         }
 
         public GroceryListItem? Delete(GroceryListItem item)
         {
-            throw new NotImplementedException();
+            // Controleer eerst of het item bestaat
+            var existingItem = Get(item.Id);
+
+            if (existingItem == null)
+            {
+                return null;
+            }
+
+            OpenConnection();
+
+            using (var command = Connection.CreateCommand())
+            {
+                // Verwijder het item uit de database
+                command.CommandText = "DELETE FROM GroceryListItems WHERE Id = @id";
+                command.Parameters.AddWithValue("@id", item.Id);
+                command.ExecuteNonQuery();
+            }
+
+            return existingItem;
         }
 
         public GroceryListItem? Get(int id)
         {
-            return groceryListItems.FirstOrDefault(g => g.Id == id);
+            // Haal alle items op en zoek met LINQ naar het specifieke Id
+            var allItems = GetAll();
+            return (from item in allItems
+                    where item.Id == id
+                    select item).FirstOrDefault();
         }
 
         public GroceryListItem? Update(GroceryListItem item)
         {
-            GroceryListItem? listItem = groceryListItems.FirstOrDefault(i => i.Id == item.Id);
-            listItem = item;
-            return listItem;
+            // Controleer eerst of het item bestaat
+            var existingItem = Get(item.Id);
+
+            if (existingItem == null)
+            {
+                return null;
+            }
+
+            OpenConnection();
+
+            using (var command = Connection.CreateCommand())
+            {
+                // Update het item in de database
+                command.CommandText = @"
+                    UPDATE GroceryListItems 
+                    SET GroceryListId = @groceryListId, 
+                        ProductId = @productId, 
+                        Amount = @amount 
+                    WHERE Id = @id";
+
+                command.Parameters.AddWithValue("@groceryListId", item.GroceryListId);
+                command.Parameters.AddWithValue("@productId", item.ProductId);
+                command.Parameters.AddWithValue("@amount", item.Amount);
+                command.Parameters.AddWithValue("@id", item.Id);
+
+                command.ExecuteNonQuery();
+            }
+
+            return Get(item.Id);
         }
     }
 }
